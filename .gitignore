@@ -1,0 +1,19 @@
+# Secrets a lokálne konfigurácie
+.env
+.env.*
+!.env.example
+
+# Lokálne poznámky s vyplnenými hodnotami
+konfiguracia.md
+*.local.md
+
+# Systémové súbory
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logy a dočasné súbory
+*.log
+*.tmp
+*.bak
+*-draft.json

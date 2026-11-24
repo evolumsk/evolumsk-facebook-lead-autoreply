@@ -1,0 +1,586 @@
+{
+  "name": "Meta Leady – e-mailová odpoveď (šablóna)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "8681dea0-bb5d-4217-9d4e-bbb7b9fd7567",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "[[SHEET_ID]]",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 0,
+          "mode": "list",
+          "cachedResultName": "[[SHEET_NAME]]"
+        },
+        "options": {
+          "outputFormatting": {
+            "general": "UNFORMATTED_VALUE",
+            "date": "FORMATTED_STRING"
+          }
+        }
+      },
+      "id": "30a19a4f-17c8-46cc-8bc0-6223ed1f67df",
+      "name": "Get All Leads",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        220,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Uzol: Filter & Deduplicate Leads\n * ---------------------------------------------------------------------------\n * Vyberie riadky z Google Sheetu, ktoré sú:\n *   1. nové            -> email_status je prázdny,\n *   2. dostatočne staré -> od created_time uplynulo aspoň minAgeMinutes,\n *   3. nie duplicitné   -> rovnaký e-mail ešte nedostal správu.\n *\n * Vstup:  všetky riadky z uzla \"Get All Leads\".\n * Výstup: jeden objekt na riadok s _action = \"SEND\" | \"DUPLICATE_SKIPPED\".\n *\n * Pred použitím upravte iba blok CONFIG nižšie. Hodnoty musia byť rovnaké\n * ako v uzle \"Prepare Lead Data\".\n */\n\nconst CONFIG = {\n  // Ako dlho má lead \"dozrieť\" pred odoslaním e-mailu (v minútach).\n  // Odporúčané 10–15. Pri 5-minútovom cykle je doručenie v okne 10–15 min.\n  minAgeMinutes: 10,\n\n  // Predvolená krajina pre telefónne čísla v lokálnom formáte (09…).\n  // Slovensko = '421', Česko = '420'.\n  countryCode: '421',\n\n  // Presné názvy stĺpcov z hlavičky Google Sheetu (pozor na diakritiku).\n  columns: {\n    id: '[[STLPEC_ID]]',\n    createdTime: '[[STLPEC_CAS]]',\n    fullName: '[[STLPEC_MENO]]',\n    email: '[[STLPEC_EMAIL]]',\n    phone: '[[STLPEC_TELEFON]]',\n    service: '[[STLPEC_SLUZBA]]',\n    budget: '[[STLPEC_ROZPOCET]]',\n    status: '[[STLPEC_STAV]]',\n  },\n};\n\nconst COL = CONFIG.columns;\nconst MIN_AGE_MINUTES = CONFIG.minAgeMinutes;\nconst items = $input.all();\nconst nowMs = Date.now();\n\n// 1) E-maily, ktoré už boli odoslané alebo sa práve spracúvajú\nconst processedEmails = new Set();\nfor (const item of items) {\n  const status = String(item.json[COL.status] || '').trim().toUpperCase();\n  const email = String(item.json[COL.email] || '').trim().toLowerCase();\n  if (email && (status === 'SENT' || status === 'PROCESSING')) {\n    processedEmails.add(email);\n  }\n}\n\n// 2) Robustné parsovanie času vytvorenia leadu\n//    Podporuje ISO, slovenský formát DD.MM.YYYY HH:mm a Google Sheets serial.\nfunction parseCreatedTime(raw) {\n  if (raw === null || raw === undefined || raw === '') return NaN;\n  if (typeof raw === 'number') {\n    return raw > 1e12 ? raw : (raw > 1e9 ? raw * 1000 : (raw - 25569) * 86400 * 1000);\n  }\n  const str = String(raw).trim();\n  const iso = Date.parse(str);\n  if (!Number.isNaN(iso)) return iso;\n  const m = str.match(/^(\\d{1,2})\\.\\s*(\\d{1,2})\\.\\s*(\\d{4})[,\\sT]+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?/);\n  if (m) {\n    const [, d, mo, y, hh, mi, ss = '0'] = m;\n    return new Date(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mi), Number(ss)).getTime();\n  }\n  return NaN;\n}\n\n// 3) Telefón -> E.164 pre klikateľný tel: odkaz\nfunction normalizePhoneForTel(rawPhone) {\n  if (!rawPhone) return '';\n  let digits = String(rawPhone).replace(/\\D/g, '');\n  if (digits.startsWith('00')) {\n    digits = digits.slice(2);\n  } else if (digits.startsWith('0') && digits.length === 10) {\n    digits = CONFIG.countryCode + digits.slice(1);\n  }\n  return digits ? '+' + digits : '';\n}\n\nconst results = [];\n\nfor (const item of items) {\n  const row = item.json;\n  const status = String(row[COL.status] || '').trim();\n  const emailRaw = String(row[COL.email] || '').trim();\n  const emailLower = emailRaw.toLowerCase();\n\n  // Spracovať len riadky bez stavu a s platným e-mailom\n  if (status !== '' || !emailLower.includes('@')) continue;\n\n  // 10-minútová brzda: e-mail odchádza najskôr po uplynutí minAgeMinutes\n  const createdMs = parseCreatedTime(row[COL.createdTime]);\n  if (Number.isNaN(createdMs)) continue;\n  const ageMinutes = (nowMs - createdMs) / 60000;\n  if (ageMinutes < MIN_AGE_MINUTES) continue;\n\n  const cleanName = String(row[COL.fullName] || '').trim();\n  const cleanPhoneDisplay = String(row[COL.phone] || '').replace(/^p:/i, '').trim();\n\n  // Deduplikácia podľa e-mailu v rámci celého Sheetu aj aktuálneho behu\n  const isDuplicate = processedEmails.has(emailLower);\n  if (!isDuplicate) processedEmails.add(emailLower);\n\n  results.push({\n    json: {\n      lead_id: String(row[COL.id] || ''),\n      created_time: row[COL.createdTime],\n      age_minutes: Math.round(ageMinutes),\n      full_name: cleanName || 'neuvedené',\n      greeting_name: cleanName ? ' ' + cleanName : '',\n      email: emailRaw,\n      phone_display: cleanPhoneDisplay || 'neuvedené',\n      phone_tel: normalizePhoneForTel(cleanPhoneDisplay),\n      service: String(row[COL.service] || 'neuvedené').trim(),\n      budget: String(row[COL.budget] || 'neuvedené').trim(),\n      _action: isDuplicate ? 'DUPLICATE_SKIPPED' : 'SEND',\n    },\n  });\n}\n\nreturn results;"
+      },
+      "id": "e4690044-9383-4d7e-b418-625145bfe822",
+      "name": "Filter & Deduplicate Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "07563c35-fa93-42f8-9f59-c13304b83b00",
+              "leftValue": "={{ $json._action }}",
+              "rightValue": "SEND",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7d7bcfdf-123f-4327-ac4a-4f6708ed437f",
+      "name": "Is Ready To Send",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "[[SHEET_ID]]",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 0,
+          "mode": "list",
+          "cachedResultName": "[[SHEET_NAME]]"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "[[STLPEC_ID]]": "={{ $json.lead_id }}",
+            "[[STLPEC_STAV]]": "DUPLICATE_SKIPPED"
+          },
+          "matchingColumns": [
+            "[[STLPEC_ID]]"
+          ],
+          "schema": [
+            {
+              "id": "[[STLPEC_ID]]",
+              "displayName": "[[STLPEC_ID]]",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "[[STLPEC_STAV]]",
+              "displayName": "[[STLPEC_STAV]]",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "[[STLPEC_ODOSLANE]]",
+              "displayName": "[[STLPEC_ODOSLANE]]",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "b70f39e4-26b8-4758-9ea7-be8c345ef075",
+      "name": "Mark Duplicate Skipped",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        920,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "[[SHEET_ID]]",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 0,
+          "mode": "list",
+          "cachedResultName": "[[SHEET_NAME]]"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "[[STLPEC_ID]]": "={{ $('Prepare Lead Data').item.json.lead_id }}",
+            "[[STLPEC_STAV]]": "PROCESSING"
+          },
+          "matchingColumns": [
+            "[[STLPEC_ID]]"
+          ],
+          "schema": [
+            {
+              "id": "[[STLPEC_ID]]",
+              "displayName": "[[STLPEC_ID]]",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "[[STLPEC_STAV]]",
+              "displayName": "[[STLPEC_STAV]]",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "[[STLPEC_ODOSLANE]]",
+              "displayName": "[[STLPEC_ODOSLANE]]",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "78ba3d8c-2fc7-46dd-a3fc-62c4c331637a",
+      "name": "Lock Row (PROCESSING)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1160,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "[[TELEGRAM_CHAT_ID]]",
+        "text": "=<b>🔔 Nový lead – [[NAZOV_FIRMY]]</b>\n\n<b>Meno:</b> {{ $('Prepare Lead Data').item.json.tg_name }}\n<b>Služba:</b> {{ $('Prepare Lead Data').item.json.tg_service }}\n<b>Rozpočet:</b> {{ $('Prepare Lead Data').item.json.tg_budget }}\n<b>Tel:</b> {{ $('Prepare Lead Data').item.json.phone_tel ? '<a href=\"tel:' + $('Prepare Lead Data').item.json.phone_tel + '\">' + $('Prepare Lead Data').item.json.tg_phone_display + '</a>' : $('Prepare Lead Data').item.json.tg_phone_display }}\n<b>E-mail:</b> {{ $('Prepare Lead Data').item.json.tg_email }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "d2ebbbc5-06f6-4146-89e1-9088cc4d8640",
+      "name": "Notify Telegram – New Lead",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1380,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "[[MENO_ODOSIELATELA]] <[[EMAIL_FIRMY]]>",
+        "toEmail": "={{ $('Prepare Lead Data').item.json.email }}",
+        "subject": "Ďakujem za Váš dopyt – kedy si môžeme krátko zavolať?",
+        "emailFormat": "html",
+        "html": "=<div style=\"font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 1.6; color: #1a1a1a; max-width: 580px;\">\n  <p style=\"margin: 0 0 14px;\">Dobrý deň{{ $('Prepare Lead Data').item.json.greeting_html }},</p>\n\n  <p style=\"margin: 0 0 14px;\">ďakujem za Váš dopyt ohľadom [[TEMA_DOPYTU]]. Nechcem Vás rušiť počas práce – kedy by Vám v pracovné dni ideálne vyhovovalo krátko si zavolať? Stačí kliknúť na vyhovujúci čas nižšie (otvorí sa predvyplnená správa, ktorú už len odošlete):</p>\n\n  <div style=\"margin: 22px 0;\">\n    <a href=\"mailto:[[EMAIL_FIRMY]]?subject=Hovor%20k%20V%C3%A1%C5%A1mu%20projektu%20(10%3A00%20-%2012%3A00)&body=Dobr%C3%BD%20de%C5%88%2C%0A%0Anajlep%C5%A1ie%20mi%20vyhovuje%20hovor%20v%20pracovn%C3%A9%20dni%20medzi%2010%3A00%20a%2012%3A00.%0A%0APr%C3%ADpadn%C3%A9%20materi%C3%A1ly%20alebo%20odkazy%3A%20\"\n       style=\"display:inline-block;margin:0 8px 10px 0;padding:11px 18px;background-color:[[FARBA_ZNACKY]];color:#ffffff;text-decoration:none;border:1px solid [[FARBA_ZNACKY]];border-radius:8px;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:14px;\">\n      10:00 – 12:00\n    </a>\n    <a href=\"mailto:[[EMAIL_FIRMY]]?subject=Hovor%20k%20V%C3%A1%C5%A1mu%20projektu%20(13%3A00%20-%2017%3A00)&body=Dobr%C3%BD%20de%C5%88%2C%0A%0Anajlep%C5%A1ie%20mi%20vyhovuje%20hovor%20v%20pracovn%C3%A9%20dni%20medzi%2013%3A00%20a%2017%3A00.%0A%0APr%C3%ADpadn%C3%A9%20materi%C3%A1ly%20alebo%20odkazy%3A%20\"\n       style=\"display:inline-block;margin:0 8px 10px 0;padding:11px 18px;background-color:[[FARBA_ZNACKY]];color:#ffffff;text-decoration:none;border:1px solid [[FARBA_ZNACKY]];border-radius:8px;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:14px;\">\n      13:00 – 17:00\n    </a>\n    <a href=\"mailto:[[EMAIL_FIRMY]]?subject=Hovor%20k%20V%C3%A1%C5%A1mu%20projektu%20(17%3A00%20-%2019%3A00)&body=Dobr%C3%BD%20de%C5%88%2C%0A%0Anajlep%C5%A1ie%20mi%20vyhovuje%20hovor%20v%20pracovn%C3%A9%20dni%20medzi%2017%3A00%20a%2019%3A00.%0A%0APr%C3%ADpadn%C3%A9%20materi%C3%A1ly%20alebo%20odkazy%3A%20\"\n       style=\"display:inline-block;margin:0 8px 10px 0;padding:11px 18px;background-color:[[FARBA_ZNACKY]];color:#ffffff;text-decoration:none;border:1px solid [[FARBA_ZNACKY]];border-radius:8px;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:14px;\">\n      17:00 – 19:00\n    </a>\n  </div>\n\n  <p style=\"margin: 0 0 14px;\">Na tento e-mail môžete pokojne aj rovno odpísať. Ak už máte určitú predstavu o projekte, stručne ju popíšte a priložte aj odkazy – výrazne to pomôže a urýchli prípravu nášho nezáväzného hovoru.</p>\n\n  <p style=\"margin: 0 0 14px;\">Zastihnete ma tiež kedykoľvek počas pracovných dní na čísle\n  <a href=\"tel:[[TELEFON_TEL]]\" style=\"color:[[FARBA_ZNACKY]];font-weight:600;text-decoration:underline;\">[[TELEFON_DISPLAY]]</a>.</p>\n\n  <div style=\"margin-top: 26px; padding-top: 16px; border-top: 1px solid #e5e5e5; font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 1.45; color: #000000;\">\n    <div style=\"margin-bottom: 6px;\">S pozdravom</div>\n    <div style=\"font-weight: 700; font-size: 14px;\">[[MENO_ODOSIELATELA]] | [[NAZOV_FIRMY]]</div>\n    <div style=\"margin-top: 4px; color: #444444;\">[[POZICIA_ODOSIELATELA]]</div>\n    <div style=\"margin-top: 8px;\">\n      <a href=\"tel:[[TELEFON_TEL]]\" style=\"color:#000000;\">[[TELEFON_DISPLAY]]</a>\n      &nbsp;|&nbsp;\n      <a href=\"mailto:[[EMAIL_FIRMY]]\" style=\"color:#000000;\">[[EMAIL_FIRMY]]</a>\n    </div>\n    <div style=\"margin-top: 4px;\">\n      [[ADRESA_FIRMY]]\n      &nbsp;|&nbsp;\n      <a href=\"[[WEB_FIRMY]]\" style=\"color:#000000;\">[[WEB_FIRMY]]</a>\n    </div>\n  </div>\n</div>",
+        "options": {
+          "bccEmail": "[[BCC_EMAIL]]",
+          "replyTo": "[[EMAIL_FIRMY]]",
+          "appendAttribution": false
+        }
+      },
+      "id": "c4a7bac2-b248-420b-9cb1-d121f3405797",
+      "name": "Send Follow-up Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        1600,
+        -160
+      ],
+      "retryOnFail": false,
+      "onError": "stopWorkflow"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "[[SHEET_ID]]",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 0,
+          "mode": "list",
+          "cachedResultName": "[[SHEET_NAME]]"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "[[STLPEC_ID]]": "={{ $('Prepare Lead Data').item.json.lead_id }}",
+            "[[STLPEC_STAV]]": "SENT",
+            "[[STLPEC_ODOSLANE]]": "={{ $now.setZone('Europe/Bratislava').toFormat('dd.MM.yyyy HH:mm') }}"
+          },
+          "matchingColumns": [
+            "[[STLPEC_ID]]"
+          ],
+          "schema": [
+            {
+              "id": "[[STLPEC_ID]]",
+              "displayName": "[[STLPEC_ID]]",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "[[STLPEC_STAV]]",
+              "displayName": "[[STLPEC_STAV]]",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "[[STLPEC_ODOSLANE]]",
+              "displayName": "[[STLPEC_ODOSLANE]]",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "d2b6c03e-e67f-4878-8025-06d584e04d6c",
+      "name": "Mark Row SENT",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1820,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "[[TELEGRAM_CHAT_ID]]",
+        "text": "=<b>✅ E-mail odoslaný</b>\n\n<b>Meno:</b> {{ $('Prepare Lead Data').item.json.tg_name }}\n<b>E-mail:</b> {{ $('Prepare Lead Data').item.json.tg_email }}\n<b>Čas:</b> {{ $now.setZone('Europe/Bratislava').toFormat('dd.MM.yyyy HH:mm') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "0c25b6ee-86f1-48fe-ba55-cbaa284743be",
+      "name": "Notify Telegram – Sent",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2040,
+        -160
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "b9790d62-97e9-45e5-871e-a498df1758e2",
+      "name": "Force Test (1st Row)",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "[[SHEET_ID]]",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 0,
+          "mode": "list",
+          "cachedResultName": "[[SHEET_NAME]]"
+        },
+        "options": {
+          "outputFormatting": {
+            "general": "UNFORMATTED_VALUE",
+            "date": "FORMATTED_STRING"
+          }
+        }
+      },
+      "id": "6cd6b4be-2640-40df-9de5-621d038b0aa2",
+      "name": "Get 1st Row (Force)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        220,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "maxItems": 1,
+        "keep": "firstItems"
+      },
+      "id": "fa8a781b-3420-41dc-a4e6-191ad4c8927f",
+      "name": "Limit First Row",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [
+        440,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/**\n * Uzol: Prepare Lead Data\n * ---------------------------------------------------------------------------\n * Jediný normalizér dát pre e-mail a Telegram. Zjednocuje dve vetvy:\n *   - produkčnú (výstup z \"Filter & Deduplicate Leads\"),\n *   - testovaciu (surový riadok z \"Limit First Row\").\n *\n * Výstupom sú polia bezpečné pre HTML aj pre Telegram (parse_mode = HTML).\n * Pred použitím upravte iba blok CONFIG nižšie. Hodnoty musia byť rovnaké\n * ako v uzle \"Filter & Deduplicate Leads\".\n */\n\nconst CONFIG = {\n  // Predvolená krajina pre telefónne čísla v lokálnom formáte (09…).\n  countryCode: '421',\n\n  // Presné názvy stĺpcov z hlavičky Google Sheetu (pozor na diakritiku).\n  columns: {\n    id: '[[STLPEC_ID]]',\n    createdTime: '[[STLPEC_CAS]]',\n    fullName: '[[STLPEC_MENO]]',\n    email: '[[STLPEC_EMAIL]]',\n    phone: '[[STLPEC_TELEFON]]',\n    service: '[[STLPEC_SLUZBA]]',\n    budget: '[[STLPEC_ROZPOCET]]',\n    status: '[[STLPEC_STAV]]',\n  },\n};\n\nconst COL = CONFIG.columns;\n\nfunction normalizePhoneForTel(rawPhone) {\n  if (!rawPhone) return '';\n  let digits = String(rawPhone).replace(/\\D/g, '');\n  if (digits.startsWith('00')) {\n    digits = digits.slice(2);\n  } else if (digits.startsWith('0') && digits.length === 10) {\n    digits = CONFIG.countryCode + digits.slice(1);\n  }\n  return digits ? '+' + digits : '';\n}\n\n// HTML escape pre Telegram (parse_mode = HTML) a pre telo e-mailu\nfunction esc(value) {\n  return String(value === null || value === undefined ? '' : value)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;');\n}\n\nfunction build(row) {\n  const emailRaw = String(row[COL.email] || '').trim();\n  const cleanName = String(row[COL.fullName] || '').trim();\n  const phoneDisplay = String(row[COL.phone] || '').replace(/^p:/i, '').trim();\n  const service = String(row[COL.service] || 'neuvedené').trim();\n  const budget = String(row[COL.budget] || 'neuvedené').trim();\n\n  return {\n    lead_id: String(row[COL.id] || ''),\n    row_number: row.row_number === undefined ? null : row.row_number,\n    created_time: row[COL.createdTime],\n    full_name: cleanName || 'neuvedené',\n    greeting_name: cleanName ? ' ' + cleanName : '',\n    greeting_html: cleanName ? ' ' + esc(cleanName) : '',\n    email: emailRaw,\n    phone_display: phoneDisplay || 'neuvedené',\n    phone_tel: normalizePhoneForTel(phoneDisplay),\n    service: service,\n    budget: budget,\n    email_status: String(row[COL.status] || ''),\n    tg_name: esc(cleanName || 'neuvedené'),\n    tg_service: esc(service),\n    tg_budget: esc(budget),\n    tg_phone_display: esc(phoneDisplay || 'neuvedené'),\n    tg_email: esc(emailRaw || 'neuvedené'),\n  };\n}\n\nreturn $input.all().map((item) => {\n  const row = item.json || {};\n\n  // 1) Produkčná vetva – Filter & Deduplicate Leads už posiela normalizované polia\n  if (row.lead_id !== undefined && row._action !== undefined) {\n    const out = build({\n      [COL.id]: row.lead_id,\n      [COL.createdTime]: row.created_time,\n      [COL.fullName]: row.greeting_name ? String(row.greeting_name).trim() : row.full_name,\n      [COL.email]: row.email,\n      [COL.phone]: row.phone_display,\n      [COL.service]: row.service,\n      [COL.budget]: row.budget,\n      [COL.status]: row.email_status,\n    });\n    return {\n      json: {\n        ...row,\n        ...out,\n        age_minutes: row.age_minutes === undefined ? null : row.age_minutes,\n        _action: row._action,\n        _source: 'production',\n      },\n    };\n  }\n\n  // 2) Testovacia vetva – surový riadok zo Sheetu (obchádza brzdu aj deduplikáciu)\n  return {\n    json: {\n      ...build(row),\n      age_minutes: null,\n      _action: 'SEND',\n      _source: 'force',\n    },\n  };\n});"
+      },
+      "id": "158fe24a-381f-430d-a790-e5da9286a262",
+      "name": "Prepare Lead Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        40
+      ]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Get All Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get All Leads": {
+      "main": [
+        [
+          {
+            "node": "Filter & Deduplicate Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter & Deduplicate Leads": {
+      "main": [
+        [
+          {
+            "node": "Is Ready To Send",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Ready To Send": {
+      "main": [
+        [
+          {
+            "node": "Prepare Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Duplicate Skipped",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lock Row (PROCESSING)": {
+      "main": [
+        [
+          {
+            "node": "Notify Telegram – New Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Telegram – New Lead": {
+      "main": [
+        [
+          {
+            "node": "Send Follow-up Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Follow-up Email": {
+      "main": [
+        [
+          {
+            "node": "Mark Row SENT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Row SENT": {
+      "main": [
+        [
+          {
+            "node": "Notify Telegram – Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Force Test (1st Row)": {
+      "main": [
+        [
+          {
+            "node": "Get 1st Row (Force)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get 1st Row (Force)": {
+      "main": [
+        [
+          {
+            "node": "Limit First Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Limit First Row": {
+      "main": [
+        [
+          {
+            "node": "Prepare Lead Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Lead Data": {
+      "main": [
+        [
+          {
+            "node": "Lock Row (PROCESSING)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "executionTimeout": -1,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "timezone": "Europe/Bratislava"
+  },
+  "active": false
+}

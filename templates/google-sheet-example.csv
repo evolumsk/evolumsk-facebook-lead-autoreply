@@ -1,0 +1,4 @@
+id,created_time,full_name,email,phone_number,sluzba,rozpocet,email_status,sent_at,notes
+l:100000000000001,2026-01-15T09:05:00+01:00,Ján Novák,jan.novak@example.com,p:+421900000001,Nový firemný web,1 000 – 3 000 €,SENT,15.01.2026 09:18,Volané 16.01.
+l:100000000000002,2026-01-15T11:40:00+01:00,Eva Testovacia,eva.testovacia@example.com,p:+421900000002,Redesign existujúceho webu,500 – 1 000 €,,,
+l:100000000000003,2026-01-15T12:10:00+01:00,Peter Ukážka,peter.ukazka@example.com,p:+421900000003,Technické SEO,do 500 €,DUPLICATE_SKIPPED,,

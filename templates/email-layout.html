@@ -1,0 +1,56 @@
+<!--
+  E-MAILOVÁ ŠABLÓNA — Meta Lead → e-mail odpoveď
+  ---------------------------------------------------------------------------
+  Ako použiť:
+  1. Nahraďte všetky hodnoty v tvare [[NAZOV]] (viď docs/01-priprava.md).
+  2. Skopírujte celý obsah od <div> po </div> do uzla "Send Follow-up Email".
+  3. Pole HTML musí v n8n začínať znakom "=", pretože obsahuje výraz {{ ... }}.
+  4. Ak meníte text v mailto: odkazoch, URL-enkódujte ho (docs/04-email-layout.md).
+
+  Pravidlá doručiteľnosti:
+  - žiadne obrázky, logá, externé fonty ani sledovacie pixely,
+  - biele pozadie a systémové písmo,
+  - maximálne 5 odkazov.
+-->
+
+<div style="font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 1.6; color: #1a1a1a; max-width: 580px;">
+  <p style="margin: 0 0 14px;">Dobrý deň{{ $('Prepare Lead Data').item.json.greeting_html }},</p>
+
+  <p style="margin: 0 0 14px;">ďakujem za Váš dopyt ohľadom [[TEMA_DOPYTU]]. Nechcem Vás rušiť počas práce – kedy by Vám v pracovné dni ideálne vyhovovalo krátko si zavolať? Stačí kliknúť na vyhovujúci čas nižšie (otvorí sa predvyplnená správa, ktorú už len odošlete):</p>
+
+  <div style="margin: 22px 0;">
+    <a href="mailto:[[EMAIL_FIRMY]]?subject=Hovor%20k%20V%C3%A1%C5%A1mu%20projektu%20(10%3A00%20-%2012%3A00)&body=Dobr%C3%BD%20de%C5%88%2C%0A%0Anajlep%C5%A1ie%20mi%20vyhovuje%20hovor%20v%20pracovn%C3%A9%20dni%20medzi%2010%3A00%20a%2012%3A00.%0A%0APr%C3%ADpadn%C3%A9%20materi%C3%A1ly%20alebo%20odkazy%3A%20"
+       style="display:inline-block;margin:0 8px 10px 0;padding:11px 18px;background-color:[[FARBA_ZNACKY]];color:#ffffff;text-decoration:none;border:1px solid [[FARBA_ZNACKY]];border-radius:8px;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:14px;">
+      10:00 – 12:00
+    </a>
+    <a href="mailto:[[EMAIL_FIRMY]]?subject=Hovor%20k%20V%C3%A1%C5%A1mu%20projektu%20(13%3A00%20-%2017%3A00)&body=Dobr%C3%BD%20de%C5%88%2C%0A%0Anajlep%C5%A1ie%20mi%20vyhovuje%20hovor%20v%20pracovn%C3%A9%20dni%20medzi%2013%3A00%20a%2017%3A00.%0A%0APr%C3%ADpadn%C3%A9%20materi%C3%A1ly%20alebo%20odkazy%3A%20"
+       style="display:inline-block;margin:0 8px 10px 0;padding:11px 18px;background-color:[[FARBA_ZNACKY]];color:#ffffff;text-decoration:none;border:1px solid [[FARBA_ZNACKY]];border-radius:8px;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:14px;">
+      13:00 – 17:00
+    </a>
+    <a href="mailto:[[EMAIL_FIRMY]]?subject=Hovor%20k%20V%C3%A1%C5%A1mu%20projektu%20(17%3A00%20-%2019%3A00)&body=Dobr%C3%BD%20de%C5%88%2C%0A%0Anajlep%C5%A1ie%20mi%20vyhovuje%20hovor%20v%20pracovn%C3%A9%20dni%20medzi%2017%3A00%20a%2019%3A00.%0A%0APr%C3%ADpadn%C3%A9%20materi%C3%A1ly%20alebo%20odkazy%3A%20"
+       style="display:inline-block;margin:0 8px 10px 0;padding:11px 18px;background-color:[[FARBA_ZNACKY]];color:#ffffff;text-decoration:none;border:1px solid [[FARBA_ZNACKY]];border-radius:8px;font-family:Arial,Helvetica,sans-serif;font-weight:700;font-size:14px;">
+      17:00 – 19:00
+    </a>
+  </div>
+
+  <p style="margin: 0 0 14px;">Na tento e-mail môžete pokojne aj rovno odpísať. Ak už máte určitú predstavu o projekte, stručne ju popíšte a priložte aj odkazy – výrazne to pomôže a urýchli prípravu nášho nezáväzného hovoru.</p>
+
+  <p style="margin: 0 0 14px;">Zastihnete ma tiež kedykoľvek počas pracovných dní na čísle
+  <a href="tel:[[TELEFON_TEL]]" style="color:[[FARBA_ZNACKY]];font-weight:600;text-decoration:underline;">[[TELEFON_DISPLAY]]</a>.</p>
+
+  <div style="margin-top: 26px; padding-top: 16px; border-top: 1px solid #e5e5e5; font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 1.45; color: #000000;">
+    <div style="margin-bottom: 6px;">S pozdravom</div>
+    <div style="font-weight: 700; font-size: 14px;">[[MENO_ODOSIELATELA]] | [[NAZOV_FIRMY]]</div>
+    <div style="margin-top: 4px; color: #444444;">[[POZICIA_ODOSIELATELA]]</div>
+    <div style="margin-top: 8px;">
+      <a href="tel:[[TELEFON_TEL]]" style="color:#000000;">[[TELEFON_DISPLAY]]</a>
+      &nbsp;|&nbsp;
+      <a href="mailto:[[EMAIL_FIRMY]]" style="color:#000000;">[[EMAIL_FIRMY]]</a>
+    </div>
+    <div style="margin-top: 4px;">
+      [[ADRESA_FIRMY]]
+      &nbsp;|&nbsp;
+      <a href="[[WEB_FIRMY]]" style="color:#000000;">[[WEB_FIRMY]]</a>
+    </div>
+  </div>
+</div>

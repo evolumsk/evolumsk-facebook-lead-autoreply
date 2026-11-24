@@ -1,0 +1,53 @@
+{
+  "name": "Meta Leady – Error Notifier",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "778f3567-997e-41a6-87b1-0fbae433bbac",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "[[TELEGRAM_CHAT_ID]]",
+        "text": "=<b>⚠️ CHYBA v n8n: {{ $json.workflow.name }}</b>\n\n<b>Zlyhal uzol:</b> {{ $json.execution.lastNodeExecuted }}\n<b>Chyba:</b> {{ $json.execution.error.message }}\n<b>Execution:</b> {{ $json.execution.url }}\n\n<i>Skontrolujte Google Sheet – riadok môže zostať v stave PROCESSING.</i>",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "id": "1e04849a-648a-4790-9d43-159a6250136c",
+      "name": "Notify Telegram – Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Notify Telegram – Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Bratislava"
+  },
+  "active": false
+}
